@@ -14,6 +14,7 @@ import matplotlib.figure
 import numpy
 import wx
 import wx.grid
+import scyjava
 
 
 def well_row_name(x):
@@ -210,7 +211,7 @@ class PlateViewer(object):
         self.channel_grid.SetDefaultEditor(wx.grid.GridCellNumberEditor())
         self.channel_grid.SetDefaultRenderer(wx.grid.GridCellNumberRenderer())
         control_sizer.Add(
-            self.channel_grid, 0, wx.ALIGN_RIGHT | wx.ALIGN_TOP | wx.ALL | wx.EXPAND, 5
+            self.channel_grid, 0, wx.ALIGN_TOP | wx.ALL | wx.EXPAND, 5
         )
         self.figure = matplotlib.figure.Figure()
         self.axes = self.figure.add_axes((0.05, 0.05, 0.9, 0.9))
@@ -517,11 +518,9 @@ class PlateViewer(object):
             self.image_dict_generation += 1
 
         def fn():
-            import javabridge
             from scipy.io.matlab.mio import loadmat
             from cellprofiler_core.utilities.pathname import url2pathname
 
-            javabridge.attach()
             with self.image_dict_lock:
                 generation = self.image_dict_generation
 
@@ -555,8 +554,9 @@ class PlateViewer(object):
                         traceback.print_exc()
                         pass
             wx.CallAfter(self.update_figure)
-            javabridge.static_call("java/lang/System", "gc", "()V")
-            javabridge.detach()
+            # not sure if necessary - NG
+            System = scyjava.jimport("java.lang.System")
+            System.gc()
 
         t = threading.Thread(target=fn)
         t.setDaemon(True)
@@ -582,7 +582,8 @@ class PlateViewer(object):
             for i in range(self.site_grid.GetNumberRows()):
                 site_name = self.site_grid.GetRowLabelValue(i)
                 site_dict[site_name] = numpy.array(
-                    [float(self.site_grid.GetCellValue(i, j)) - 1 for j in range(2)]
+                    # "or 1" because it might return an empty string for no value
+                    [float(self.site_grid.GetCellValue(i, j) or 1) - 1 for j in range(2)]
                 )[::-1]
                 tile_dims = [
                     max(i0, i1) for i0, i1 in zip(site_dict[site_name], tile_dims)

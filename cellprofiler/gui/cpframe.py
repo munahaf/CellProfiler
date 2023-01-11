@@ -36,8 +36,11 @@ from .pipeline import Pipeline
 from .pipelinecontroller import PipelineController
 from .pipelinelistview import PipelineListView
 from .preferences_dialog._preferences_dialog import PreferencesDialog
+from .readers_dialog._readers_dialog import ReadersDialog
 from .preferences_view import PreferencesView
 from .utilities.module_view import stop_validation_queue_thread
+
+LOGGER = logging.getLogger(__name__)
 
 HELP_ON_FILE_LIST = """\
 The *File List* panel displays the image files that are managed by the
@@ -110,6 +113,7 @@ ID_EDIT_GO_TO_MODULE = wx.NewId()
 ID_FIND_USAGES = wx.NewId()
 
 ID_OPTIONS_PREFERENCES = wx.ID_PREFERENCES
+ID_OPTIONS_READERS = wx.NewId()
 ID_CHECK_NEW_VERSION = wx.NewId()
 
 ID_DEBUG_TOGGLE = wx.NewId()
@@ -172,10 +176,10 @@ class CPFrame(wx.Frame):
         # them and beat them.
         self.__splitter.SetBackgroundStyle(0)
 
-        self.__right_win = wx.Panel(self.__splitter, style=wx.BORDER_NONE)
+        self.__right_win = wx.Panel(self.__splitter, style=wx.BORDER_NONE, name="right_win")
         self.__right_win.SetAutoLayout(True)
 
-        self.__left_win = wx.Panel(self.__splitter, style=wx.BORDER_NONE)
+        self.__left_win = wx.Panel(self.__splitter, style=wx.BORDER_NONE, name="left_win")
         # bottom left will be the file browser
 
         self.__module_list_panel = wx.Panel(self.__left_win)
@@ -212,7 +216,7 @@ class CPFrame(wx.Frame):
         self.__notes_panel = wx.Panel(self.__right_win)
         self.__right_win.GetSizer().Add(self.__notes_panel, 0, wx.EXPAND | wx.ALL)
         self.__right_win.GetSizer().AddSpacer(4)
-        self.__path_module_imageset_panel = wx.Panel(self.__right_win)
+        self.__path_module_imageset_panel = wx.Panel(self.__right_win, name="path_module_imageset_panel")
         self.__right_win.GetSizer().Add(
             self.__path_module_imageset_panel, 1, wx.EXPAND | wx.ALL
         )
@@ -232,7 +236,7 @@ class CPFrame(wx.Frame):
         # Path list sash controls path list sizing
         #
         self.__path_list_sash = wx.adv.SashLayoutWindow(
-            self.__path_module_imageset_panel, style=wx.NO_BORDER
+            self.__path_module_imageset_panel, style=wx.NO_BORDER, name="path_list_sash"
         )
         self.__path_list_sash.Bind(wx.adv.EVT_SASH_DRAGGED, self.__on_sash_drag)
         self.__path_list_sash.SetOrientation(wx.adv.LAYOUT_HORIZONTAL)
@@ -300,7 +304,7 @@ class CPFrame(wx.Frame):
         ######################################################################
 
         self.__imageset_sash = wx.adv.SashLayoutWindow(
-            self.__path_module_imageset_panel, style=wx.NO_BORDER
+            self.__path_module_imageset_panel, style=wx.NO_BORDER, name="imageset_sash"
         )
         self.__imageset_sash.SetOrientation(wx.adv.LAYOUT_HORIZONTAL)
         self.__imageset_sash.SetAlignment(wx.adv.LAYOUT_BOTTOM)
@@ -310,7 +314,7 @@ class CPFrame(wx.Frame):
         self.__imageset_sash.SetSashVisible(wx.adv.SASH_TOP, True)
         self.__imageset_sash.Bind(wx.adv.EVT_SASH_DRAGGED, self.__on_sash_drag)
         self.__imageset_sash.Hide()
-        self.__imageset_panel = wx.Panel(self.__imageset_sash)
+        self.__imageset_panel = wx.Panel(self.__imageset_sash, name="imageset_panel")
         self.__imageset_panel.SetSizer(wx.BoxSizer())
         self.__imageset_panel.SetAutoLayout(True)
 
@@ -513,32 +517,32 @@ class CPFrame(wx.Frame):
         try:
             self.__workspace.measurements.flush()
         except:
-            logging.warning(
+            LOGGER.warning(
                 "Failed to flush temporary measurements file during close",
                 exc_info=True,
             )
         try:
-            from cellprofiler_core.constants.reader import all_readers
-            for reader in all_readers.values():
+            from cellprofiler_core.constants.reader import ALL_READERS
+            for reader in ALL_READERS.values():
                 reader.clear_cached_readers()
         except:
-            logging.warning(
+            LOGGER.warning(
                 "Failed to clear reader cache during close", exc_info=True,
             )
         try:
             self.__preferences_view.close()
         except:
-            logging.warning("Failed during close", exc_info=True)
+            LOGGER.warning("Failed during close", exc_info=True)
 
         try:
             self.pipeline_controller.on_close()
         except:
-            logging.warning("Failed to close the pipeline controller", exc_info=True)
+            LOGGER.warning("Failed to close the pipeline controller", exc_info=True)
 
         try:
             stop_validation_queue_thread()
         except:
-            logging.warning("Failed to stop pipeline validation thread", exc_info=True)
+            LOGGER.warning("Failed to stop pipeline validation thread", exc_info=True)
         wx.GetApp().ExitMainLoop()
 
     def __set_properties(self):
@@ -656,6 +660,11 @@ class CPFrame(wx.Frame):
         if sys.platform == "darwin":
             self.__menu_file.Append(ID_FILE_NEW_CP, "Open A New CP Window")
             self.__menu_file.AppendSeparator()
+        self.__menu_file.Append(
+            ID_OPTIONS_READERS,
+            "Configure Readers...",
+            "Configure image file reader preferences",
+        )
         self.__menu_file.Append(
             ID_OPTIONS_PREFERENCES,
             "&Preferences...",
@@ -872,6 +881,7 @@ class CPFrame(wx.Frame):
         self.Bind(wx.EVT_MENU, self.__on_help_module, id=ID_HELP_MODULE)
         self.Bind(wx.EVT_BUTTON, self.__on_help_module, id=ID_HELP_MODULE)
 
+        self.Bind(wx.EVT_MENU, self.__on_readers, id=ID_OPTIONS_READERS)
         self.Bind(wx.EVT_MENU, self.__on_preferences, id=ID_OPTIONS_PREFERENCES)
         self.Bind(wx.EVT_MENU, self.__on_close_all, id=ID_WINDOW_CLOSE_ALL)
         self.Bind(wx.EVT_MENU, self.__debug_pdb, id=ID_DEBUG_PDB)
@@ -1018,6 +1028,11 @@ class CPFrame(wx.Frame):
             wx.lib.inspection.InspectionTool().Show()
         except:
             wx.MessageBox("Inspection tool is not available on this platform")
+
+    @staticmethod
+    def __on_readers(event):
+        dlg = ReadersDialog()
+        dlg.Show()
 
     @staticmethod
     def __on_preferences(event):
@@ -1346,7 +1361,7 @@ class CPFrame(wx.Frame):
     def remove_menu_item(self, item_id):
         menu_item = self.__menu_bar.FindItemById(item_id)
         if not menu_item:
-            logging.error(f"Item with id {item_id} does not exist")
+            LOGGER.error(f"Item with id {item_id} does not exist")
             return
         parent = menu_item.GetMenu()
         removed = parent.Remove(menu_item)
@@ -1356,7 +1371,7 @@ class CPFrame(wx.Frame):
         if sibling_id:
             sibling_menu_item, sibling_menu_pos = parent_menu.FindChildItem(sibling_id)
             if not sibling_menu_item:
-                logging.error(f"Sibling with id {sibling_id} does not exist")
+                LOGGER.error(f"Sibling with id {sibling_id} does not exist")
                 return
             parent_menu.Insert(sibling_menu_pos, child_id, title)
         else:
@@ -1365,7 +1380,7 @@ class CPFrame(wx.Frame):
     def inject_menu_item_by_id(self, parent_id, child_id, title, sibling_id=None):
         parent_menu_idx = self.__menu_bar.FindItemById(parent_id)
         if parent_menu_idx == wx.NOT_FOUND:
-            logging.error(f"Parent with id {parent_id} does not exist")
+            LOGGER.error(f"Parent with id {parent_id} does not exist")
             return
         parent_menu = self.__menu_bar.GetMenu(parent_menu_idx)
         self._inject_menu_item(parent_menu, child_id, title, sibling_id)
@@ -1373,7 +1388,7 @@ class CPFrame(wx.Frame):
     def inject_menu_item_by_title(self, parent_title, child_id, title, sibling_id=None):
         parent_menu_idx = self.__menu_bar.FindMenu(parent_title)
         if parent_menu_idx == wx.NOT_FOUND:
-            logging.error(f"Parent with title \"{parent_title}\" does not exist")
+            LOGGER.error(f"Parent with title \"{parent_title}\" does not exist")
             return
         parent_menu = self.__menu_bar.GetMenu(parent_menu_idx)
         self._inject_menu_item(parent_menu, child_id, title, sibling_id)

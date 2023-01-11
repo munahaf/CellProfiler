@@ -71,7 +71,7 @@ from cellprofiler_core.constants.pipeline import (
     DIRECTION_DOWN,
     DIRECTION_UP,
 )
-from cellprofiler_core.constants.reader import all_readers
+from cellprofiler_core.constants.reader import ALL_READERS, ZARR_FILETYPE
 from cellprofiler_core.constants.workspace import DISPOSITION_SKIP
 from cellprofiler_core.image import ImageSetList
 from cellprofiler_core.measurement import Measurements
@@ -164,7 +164,8 @@ import cellprofiler.icons
 from cellprofiler.gui.pipelinelistview import EVT_PLV_VALID_STEP_COLUMN_CLICKED
 from .workspace_view import WorkspaceView
 
-logger = logging.getLogger(__name__)
+LOGGER = logging.getLogger(__name__)
+
 RECENT_PIPELINE_FILE_MENU_ID = [wx.NewId() for i in range(RECENT_FILE_COUNT)]
 RECENT_WORKSPACE_FILE_MENU_ID = [wx.NewId() for i in range(RECENT_FILE_COUNT)]
 ED_STOP = "Stop"
@@ -461,9 +462,9 @@ class PipelineController(object):
             EVT_PLV_VALID_STEP_COLUMN_CLICKED, self.on_step_from_specific_module,
         )
 
-        from bioformats.formatreader import set_omero_login_hook
-
-        set_omero_login_hook(self.omero_login)
+        #TODO: disabled until CellProfiler/CellProfiler#4684 is resolved
+        # from cellprofiler_core.bioformats.formatreader import set_omero_login_hook
+        # set_omero_login_hook(self.omero_login)
 
         self.workspace_view = None
 
@@ -1851,10 +1852,15 @@ class PipelineController(object):
             return
         file_objects = self.__pipeline.get_filtered_file_list(self.__workspace)
         cap = len(file_objects)
+
+        if cap == 0:
+            LOGGER.info("Metadata extraction not completed, no file objects available")
+            return
+
         with wx.ProgressDialog(
             parent=self.__frame,
             title="Extracting metadata",
-            message="Extracting metadata fr:om file headers...",
+            message="Extracting metadata from file headers...",
             maximum=cap,
             style=wx.PD_CAN_ABORT | wx.PD_APP_MODAL,
         ) as dlg:
@@ -2191,13 +2197,23 @@ class PipelineController(object):
                         break
 
                     message[0] = "\nProcessing " + pathname
-                    if os.path.isfile(pathname):
+                    if ZARR_FILETYPE.search(pathname):
+                        pathname, _ = ZARR_FILETYPE.split(pathname)
+                        urls.append(pathname2url(pathname))
+                        if len(urls) > 100:
+                            queue.put(urls)
+                            urls = []
+                    elif os.path.isfile(pathname):
                         urls.append(pathname2url(pathname))
                         if len(urls) > 100:
                             queue.put(urls)
                             urls = []
                     elif os.path.isdir(pathname):
                         for dirpath, dirnames, files in os.walk(pathname):
+                            if ZARR_FILETYPE.search(dirpath):
+                                zarr_dir, _ = ZARR_FILETYPE.split(dirpath)
+                                urls.append(pathname2url(zarr_dir))
+                                continue
                             for filename in files:
                                 if not interrupt or interrupt[0]:
                                     break
@@ -2308,7 +2324,7 @@ class PipelineController(object):
                 plane_id = treectrl.AppendItem(folder_id, str(plane_object), data=plane_object)
                 treectrl.Expand(folder_id)
                 if plane_object == selected_plane:
-                    print("Selected plane found")
+                    LOGGER.info("Selected plane found")
                     treectrl.SelectItem(plane_id)
             sizer.Add(treectrl, 1, wx.EXPAND)
             button_sizer = wx.StdDialogButtonSizer()
@@ -2448,7 +2464,7 @@ class PipelineController(object):
                         d[category] = []
                     d[category].append(module_name)
             except:
-                logging.error(
+                LOGGER.error(
                     "Unable to instantiate module %s.\n\n" % module_name, exc_info=True
                 )
 
@@ -2507,7 +2523,7 @@ class PipelineController(object):
 
             self.on_add_to_pipeline(self, AddToPipelineEvent(module_name, loader))
         else:
-            logging.warning(
+            LOGGER.warning(
                 "Could not find module associated with ID = %d, module = %s"
                 % (event.GetId(), event.GetString())
             )
@@ -2669,12 +2685,12 @@ class PipelineController(object):
             return
 
         if active_module is None:
-            logging.warning(
+            LOGGER.warning(
                 "User managed to fire the enable/disable module event and no module was active"
             )
             return
         if active_module.is_input_module():
-            logging.warning(
+            LOGGER.warning(
                 "User managed to fire the enable/disable module event when an input module was active"
             )
             return
@@ -2881,7 +2897,7 @@ class PipelineController(object):
 
             self.populate_goto_menu()
         except Exception as error:
-            print(error)
+            LOGGER.error(error)
             extended_message = "Failure in analysis startup"
 
             error = cellprofiler.gui.dialog.Error("Error", extended_message)
@@ -2928,7 +2944,7 @@ class PipelineController(object):
         if isinstance(evt, Started):
             wx.CallAfter(self.show_analysis_controls)
         elif isinstance(evt, Progress):
-            print("Progress", evt.counts)
+            LOGGER.info("Progress", evt.counts)
             total_jobs = sum(evt.counts.values())
             completed = sum(
                 map(
@@ -2942,7 +2958,7 @@ class PipelineController(object):
                 completed,
             )
         elif isinstance(evt, Finished):
-            print(("Cancelled!" if evt.cancelled else "Finished!"))
+            LOGGER.info(("Cancelled!" if evt.cancelled else "Finished!"))
             # drop any interaction/display requests or exceptions
             while True:
                 try:
@@ -3034,7 +3050,7 @@ class PipelineController(object):
             self.__pipeline.modules(exclude_disabled=False)
         ):
             # Defensive coding: module was deleted?
-            logging.warning(
+            LOGGER.warning(
                 "Failed to display module # %d. The pipeline may have been edited during analysis"
                 % module_num
             )
@@ -3054,7 +3070,7 @@ class PipelineController(object):
                     fig.figure.canvas._isDrawn = False
                 fig.figure.canvas.Refresh()
         except Exception as exc:
-            logger.exception(exc.__traceback__)
+            LOGGER.exception(exc.__traceback__)
             error = cellprofiler.gui.dialog.Error("Error", str(exc))
             if error.status == wx.ID_CANCEL:
                 cancel_progress()
@@ -3079,7 +3095,7 @@ class PipelineController(object):
                 module.display_post_run(self.__workspace, fig)
                 fig.Refresh()
         except Exception as exc:
-            logger.exception(exc.__traceback__)
+            LOGGER.exception(exc.__traceback__)
             error = cellprofiler.gui.dialog.Error("Error", str(exc))
             if error.status == wx.ID_CANCEL:
                 cancel_progress()
@@ -3101,7 +3117,7 @@ class PipelineController(object):
                 module.display_post_group(self.__workspace, fig)
                 fig.Refresh()
         except Exception as exc:
-            logger.exception(exc.__traceback__)
+            LOGGER.exception(exc.__traceback__)
             error = cellprofiler.gui.dialog.Error("Error", str(exc))
             if error.status == wx.ID_CANCEL:
                 cancel_progress()
@@ -3124,7 +3140,7 @@ class PipelineController(object):
             module = self.__pipeline.modules(exclude_disabled=False)[module_num - 1]
             result = module.handle_interaction(*args, **kwargs)
         except Exception as exc:
-            logger.exception(exc.__traceback__)
+            LOGGER.exception(exc.__traceback__)
             error = cellprofiler.gui.dialog.Error("Error", str(exc))
             if error.status == wx.ID_CANCEL:
                 cancel_progress()
@@ -3136,7 +3152,7 @@ class PipelineController(object):
     @staticmethod
     def omero_login_request(evt):
         """Handle retrieval of the Omero credentials"""
-        from bioformats.formatreader import get_omero_credentials
+        from cellprofiler_core.bioformats.formatreader import get_omero_credentials
 
         evt.reply(OmeroLogin(get_omero_credentials()))
 
@@ -3252,7 +3268,7 @@ class PipelineController(object):
                         buffer_dict = {}
                         index += 1
             # Log step needs to be here since this triggers sentry
-            logging.error("Failed to run module %s", err_module_name, exc_info=True)
+            LOGGER.error("Failed to run module %s", err_module_name, exc_info=True)
 
     def on_pause(self, event):
         self.__frame.preferences_view.pause(True)
@@ -3393,7 +3409,7 @@ class PipelineController(object):
         self.stop_debugging()
 
     def stop_debugging(self):
-        for reader in all_readers.values():
+        for reader in ALL_READERS.values():
             reader.clear_cached_readers()
         self.__pipeline.test_mode = False
         self.__pipeline_list_view.set_debug_mode(False)
@@ -3470,7 +3486,7 @@ class PipelineController(object):
             if get_telemetry():
                 self.sentry_pack_pipeline(module.module_name, module.module_num)
             else:
-                logging.error("Failed to run module %s", module.module_name, exc_info=True)
+                LOGGER.error("Failed to run module %s", module.module_name, exc_info=True)
             event = RunException(instance, module)
             self.__pipeline.notify_listeners(event)
             self.__pipeline_list_view.select_one_module(module.module_num)
@@ -3975,7 +3991,7 @@ class PipelineController(object):
                     self.__module_view.get_current_module().get_module_num(), event
                 )
             else:
-                print("No current module")
+                LOGGER.info("No current module")
 
     def show_parameter_sample_options(self, module_num, event):
         if self.__parameter_sample_frame is None:

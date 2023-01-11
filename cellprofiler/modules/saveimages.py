@@ -32,13 +32,14 @@ See also **NamesAndTypes**.
 import os
 import os.path
 
-import bioformats.formatwriter
-import bioformats.omexml
+from cellprofiler_core.bioformats import formatwriter
+from cellprofiler_core.bioformats import omexml
 import cellprofiler_core.utilities.pathname
 import h5py
 import numpy
 import skimage.io
 import skimage.util
+import logging
 from cellprofiler_core.constants.measurement import (
     C_FILE_NAME,
     C_PATH_NAME,
@@ -59,6 +60,9 @@ from cellprofiler_core.setting.subscriber import ImageSubscriber, FileImageSubsc
 from cellprofiler_core.setting.text import Text, Integer, Directory
 
 from cellprofiler.modules import _help
+
+
+LOGGER = logging.getLogger(__name__)
 
 IF_IMAGE = "Image"
 IF_MASK = "Mask"
@@ -647,13 +651,13 @@ to unexpected behavior like saving in the original input file directory. For saf
         pixels = image.pixel_data
         if self.get_bit_depth() == BIT_DEPTH_8:
             pixels = skimage.util.img_as_ubyte(pixels)
-            pixel_type = bioformats.omexml.PT_UINT8
+            pixel_type = omexml.PT_UINT8
         elif self.get_bit_depth() == BIT_DEPTH_16:
             pixels = skimage.util.img_as_uint(pixels)
-            pixel_type = bioformats.omexml.PT_UINT16
+            pixel_type = omexml.PT_UINT16
         elif self.get_bit_depth() == BIT_DEPTH_FLOAT:
             pixels = skimage.util.img_as_float32(pixels)
-            pixel_type = bioformats.omexml.PT_FLOAT
+            pixel_type = omexml.PT_FLOAT
         else:
             raise ValueError("Bit depth unsupported in movie mode")
         frames = d["N_FRAMES"]
@@ -716,9 +720,7 @@ to unexpected behavior like saving in the original input file directory. For saf
 
         channel_names - names of the channels (make up names if not present
         """
-        from cellprofiler_core.utilities.java import start_java
-        start_java()
-        bioformats.formatwriter.write_image(
+        formatwriter.write_image(
             filename,
             pixels,
             pixel_type,
@@ -942,10 +944,7 @@ to unexpected behavior like saving in the original input file directory. For saf
             try:
                 os.remove(result)
             except:
-                import bioformats
-
-                bioformats.clear_image_reader_cache()
-                os.remove(result)
+                LOGGER.error(f"Could not remove {result}")
         return result
 
     def get_file_format(self):

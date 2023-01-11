@@ -10,7 +10,6 @@ import threading
 import uuid
 from io import StringIO
 
-import javabridge
 import numpy
 import zmq
 from cellprofiler_core.constants.measurement import (
@@ -53,6 +52,8 @@ CELLPROFILER_EXCEPTION_1 = "cellprofiler-exception-1"
 PIPELINE_EXCEPTION_1 = "pipeline-exception-1"
 CLEAN_PIPELINE_REQ_1 = "clean-pipeline-request-1"
 CLEAN_PIPELINE_REPLY_1 = "clean-pipeline-reply-1"
+
+LOGGER = logging.getLogger(__name__)
 
 
 class KnimeBridgeServer(threading.Thread):
@@ -105,11 +106,10 @@ class KnimeBridgeServer(threading.Thread):
         self.start_socket.close()
 
     def run(self):
-        javabridge.attach()
         try:
+            LOGGER.info("Binding Knime bridge server to %s" % self.address)
             self.socket = self.context.socket(zmq.REP)
             self.socket.bind(self.address)
-            logging.info("Binding Knime bridge server to %s" % self.address)
             poller = zmq.Poller()
             poller.register(self.socket, flags=zmq.POLLIN)
             if self.notify_addr is not None:
@@ -148,7 +148,7 @@ class KnimeBridgeServer(threading.Thread):
                                         session_id, message_type, msg
                                     )
                                 except Exception as e:
-                                    logging.warning(e)
+                                    LOGGER.warning(e)
                                     self.raise_cellprofiler_exception(session_id, e)
                     else:
                         continue
@@ -157,8 +157,8 @@ class KnimeBridgeServer(threading.Thread):
                 if self.notify_socket:
                     self.notify_socket.close()
                 self.socket.close()
-        finally:
-            javabridge.detach()
+        except Exception as e:
+            LOGGER.error("Could not bind Knime bridge server")
 
     def connect(self, session_id, message_type, message):
         """Handle the connect message"""
@@ -168,13 +168,13 @@ class KnimeBridgeServer(threading.Thread):
 
     def pipeline_info(self, session_id, message_type, message):
         """Handle the pipeline info message"""
-        logging.info("Handling pipeline info request")
+        LOGGER.info("Handling pipeline info request")
         pipeline_txt = message.pop(0).bytes
         pipeline = cellprofiler_core.pipeline.Pipeline()
         try:
             pipeline.loadtxt(StringIO(pipeline_txt))
         except Exception as e:
-            logging.warning("Failed to load pipeline: sending pipeline exception")
+            LOGGER.warning("Failed to load pipeline: sending pipeline exception")
             self.raise_pipeline_exception(session_id, str(e))
             return
         input_modules, other_modules = self.split_pipeline(pipeline)
@@ -191,14 +191,14 @@ class KnimeBridgeServer(threading.Thread):
 
     def clean_pipeline(self, session_id, message_type, message):
         """Handle the clean pipeline request message"""
-        logging.info("Handling clean pipeline request")
+        LOGGER.info("Handling clean pipeline request")
         pipeline_txt = message.pop(0).bytes
         module_names = json.loads(message.pop(0).bytes)
         pipeline = cellprofiler_core.pipeline.Pipeline()
         try:
             pipeline.loadtxt(StringIO(pipeline_txt))
         except Exception as e:
-            logging.warning("Failed to load pipeline: sending pipeline exception")
+            LOGGER.warning("Failed to load pipeline: sending pipeline exception")
             self.raise_pipeline_exception(session_id, str(e))
             return
         to_remove = []
@@ -235,7 +235,7 @@ class KnimeBridgeServer(threading.Thread):
                 pipeline, module, m, object_set, m, None
             )
             try:
-                logging.info(
+                LOGGER.info(
                     "Running module # %d: %s" % (module.module_num, module.module_name)
                 )
                 pipeline.run_module(module, workspace)
@@ -246,7 +246,7 @@ class KnimeBridgeServer(threading.Thread):
                     module.module_name,
                     e,
                 )
-                logging.warning(msg)
+                LOGGER.warning(msg)
                 self.raise_cellprofiler_exception(session_id, msg)
                 return
         type_names, feature_dict = self.find_measurements(other_modules, pipeline)
@@ -363,7 +363,7 @@ class KnimeBridgeServer(threading.Thread):
         try:
             pipeline.loadtxt(StringIO(pipeline_txt))
         except Exception as e:
-            logging.warning("Failed to load pipeline: sending pipeline exception")
+            LOGGER.warning("Failed to load pipeline: sending pipeline exception")
             self.raise_pipeline_exception(session_id, str(e))
             return
 
@@ -375,7 +375,7 @@ class KnimeBridgeServer(threading.Thread):
         workspace = cellprofiler_core.workspace.Workspace(
             pipeline, None, m, None, m, None
         )
-        logging.info("Preparing group")
+        LOGGER.info("Preparing group")
         for module in other_modules:
             module.prepare_group(
                 workspace,
@@ -396,7 +396,7 @@ class KnimeBridgeServer(threading.Thread):
                     pipeline, module, m, object_set, m, None
                 )
                 try:
-                    logging.info(
+                    LOGGER.info(
                         "Running module # %d: %s"
                         % (module.module_num, module.module_name)
                     )
@@ -408,7 +408,7 @@ class KnimeBridgeServer(threading.Thread):
                         module.module_name,
                         e,
                     )
-                    logging.warning(msg)
+                    LOGGER.warning(msg)
                     self.raise_cellprofiler_exception(session_id, msg)
                     return
             else:
@@ -419,7 +419,7 @@ class KnimeBridgeServer(threading.Thread):
             module.post_group(
                 workspace, dict([("image_number", i) for i in image_numbers])
             )
-        logging.info("Finished group")
+        LOGGER.info("Finished group")
 
         type_names, feature_dict = self.find_measurements(other_modules, pipeline)
 
@@ -534,13 +534,13 @@ class KnimeBridgeServer(threading.Thread):
                 )
                 m.add(channel_name, cellprofiler_core.image.Image(pixel_data))
         except Exception as e:
-            logging.warning("Failed to decode message")
+            LOGGER.warning("Failed to decode message")
             self.raise_cellprofiler_exception(session_id, e)
             return None, None, None
         try:
             pipeline.loadtxt(StringIO(pipeline_txt))
         except Exception as e:
-            logging.warning("Failed to load pipeline: sending pipeline exception")
+            LOGGER.warning("Failed to load pipeline: sending pipeline exception")
             self.raise_pipeline_exception(session_id, str(e))
             return None, None, None
 

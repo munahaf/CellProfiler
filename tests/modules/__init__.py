@@ -1,22 +1,24 @@
 """Directory for tests of individual modules
 """
 import logging
-
-logger = logging.getLogger(__name__)
 import base64
-from bioformats.formatwriter import write_image
-from bioformats import PT_UINT8, PT_UINT16
 import hashlib
 import numpy as np
 import os
 import unittest
-from urllib.request import URLopener
 import tempfile
 import functools
-
 import scipy.io.matlab.mio
+import numpy
+import skimage.io
+from urllib.request import URLopener
+
 import cellprofiler.utilities
 import cellprofiler_core.utilities.legacy
+from cellprofiler_core.pipeline import ImageFile
+
+
+LOGGER = logging.getLogger(__name__)
 
 __temp_example_images_folder = None
 
@@ -42,7 +44,7 @@ def example_images_directory():
             return path
     if __temp_example_images_folder is None:
         __temp_example_images_folder = tempfile.mkdtemp(prefix="cp_exampleimages")
-        logger.warning(
+        LOGGER.warning(
             "Creating temporary folder %s for example images"
             % __temp_example_images_folder
         )
@@ -87,7 +89,7 @@ def testimages_directory():
         return path
     if __temp_test_images_folder is None:
         __temp_test_images_folder = tempfile.mkdtemp(prefix="cp_testimages")
-        logger.warning(
+        LOGGER.warning(
             "Creating temporary folder %s for test images" % __temp_test_images_folder
         )
     return __temp_test_images_folder
@@ -169,7 +171,12 @@ def maybe_download_example_image(folders, file_name, shape=None):
         random_state = np.random.RandomState()
         random_state.seed()
         image = (random_state.uniform(size=shape) * 255).astype(np.uint8)
-        write_image(local_path, image, PT_UINT8)
+
+        if len(shape) > 2:
+            skimage.io.imsave(local_path, numpy.transpose(image, (2,0,1)), imagej=True)
+        else:
+            skimage.io.imsave(local_path, image)
+
     return local_path
 
 
@@ -192,7 +199,10 @@ def make_12_bit_image(folder, filename, shape):
     if not os.path.isdir(os.path.dirname(path)):
         os.makedirs(os.path.dirname(path))
 
-    write_image(path, img, PT_UINT16)
+    if len(shape) > 2:
+        skimage.io.imsave(path, numpy.transpose(img, (2,0,1)), imagej=True)
+    else:
+        skimage.io.imsave(path, img)
     #
     # Now go through the file and find the TIF bits per sample IFD (#258) and
     # change it from 16 to 12.
@@ -331,11 +341,12 @@ def read_example_image(folder, file_name, **kwargs):
 
     **kwargs - any keyword arguments are passed onto load_image
     """
-    from bioformats import load_image
+    from cellprofiler_core.reader import get_image_reader
 
     path = os.path.join(example_images_directory(), folder, file_name)
     maybe_download_example_image([folder], file_name)
-    return load_image(path, **kwargs)
+    rdr = get_image_reader(ImageFile(path))
+    return rdr.read(path, **kwargs)
 
 
 raw_8_1 = "AAQJDRIWGx8kKC0xNjo/Q0hMUVZaX2NobHF1en6Dh4wEBgoOEhcbICQpLTI2Oz9ESE1RVlpfY2hscXV6foOHjAkKDBAUGBwgJSkuMjc7QERJTVJWW19kaG1xdnp/g4iMDQ4QExYaHiImKi8zODxARUlOUldbYGRpbXJ2e3+EiI0SEhQWGR0gJCgsMDU5PUFGSk9TV1xgZWlucnd7gISJjRYXGBodICMmKi4yNjo/Q0dLUFRYXWFmam9zd3yAhYmOGxscHiAjJiktMDQ4PEBESU1RVVpeYmdrcHR4fYGGio8fICAiJCYpLDAzNzs+QkZKT1NXW19kaGxxdXl+goeLjyQkJSYoKi0wMzY6PUFFSUxRVVldYWVqbnJ2e3+DiIyRKCkpKiwuMDM2OTxAQ0dLT1NXW19jZ2tvdHh8gIWJjZItLS4vMDI0Nzo8QENGSk1RVVldYWVpbXF1eX6ChoqPkzEyMjM1Njg7PUBDRklNUFRXW19jZ2tvc3d7f4SIjJCUNjY3ODk6PD5BQ0ZJTFBTV1peYWVpbXF1eX2BhYmOkpY6Ozs8PT9AQkVHSk1QU1ZZXWBkaGxvc3d7f4OHi4+UmD8/QEBBQ0RGSUtNUFNWWVxgY2dqbnJ2eX2BhYmNkZWaQ0RERUZHSUpMT1FUV1lcYGNmam1xdHh8gISHi4+Tl5tISElJSktNT1FTVVdaXWBjZmltcHR3e36ChoqOkpaZnUxNTU5PUFFTVVdZW15gY2ZpbHBzdnp9gYWIjJCUmJygUVFSUlNUVVdZW11fYWRnam1wc3Z5fYCEh4uPkpaanqJWVlZXV1haW11fYWNlaGptcHN2eXyAg4eKjpGVmZ2gpFpaW1tcXV5fYWNlZ2lsbnF0dnl8gIOGio2RlJibn6OnX19fYGBhYmRlZ2lrbW9ydHd6fYCDhomNkJOXmp6ipaljY2RkZWZnaGprbW9xc3Z4e32Ag4aJjJCTlpqdoaSorGhoaGlpamtsbm9xc3V3eXx+gYSHio2Qk5aZnaCkp6uubGxtbW5vcHFydHV3eXt9gIKFh4qNkJOWmZygo6eqrrFxcXFycnN0dXZ4eXt9f4GEhoiLjpGTlpmcoKOmqq2wtHV1dnZ3d3h5e3x+f4GDhYeKjI+RlJeanaCjpqmtsLO3enp6e3t8fX5/gIKEhYeJi46QkpWYmp2go6aprLCztrp+fn9/gICBgoOFhoiJi42PkpSWmZueoaSnqq2ws7a5vYODg4SEhYaHiImKjI6PkZOWmJqdn6Kkp6qtsLO2ubzAh4eIiImJiouMjY+QkpSVl5mcnqCjpairrrCztrm8wMOMjIyNjY6Pj5GSk5SWmJqbnaCipKeprK6xtLe6vcDDxpCRkZGSkpOUlZaXmZqcnqCipKaoqq2vsrW3ur3Aw8bJlZWVlpaXl5iZmpydn6CipKaoqqyusbO2uLu+wcTGyc2Zmpqam5ucnZ6foKGjpKaoqqyusLK0t7m8v8HEx8rN0J6enp+foKChoqOkpqepqqyusLK0tri7vcDCxcjLzdDTo6Ojo6SkpaanqKmqq62usLK0tri6vL/Bw8bJy87R1Nenp6eoqKmpqqusra6wsbO0tri6vL7AwsXHyszP0tTX2qysrKytra6vr7Cxs7S1t7m6vL7AwsTGycvO0NPV2NvesLCwsbGysrO0tba3uLq7vb7AwsTGyMrNz9HU1tnc3uG1tbW1tra3t7i5uru9vr/Bw8TGyMrMztDT1dja3d/i5bm5ubq6u7u8vb6/wMHCxMXHycrMztDS1NfZ297g4+bovr6+vr+/wMDBwsPExcfIycvNztDS1NbY293f4uTn6ezCwsLDw8TExcbGx8nKy8zOz9HT1NbY2tzf4ePl6Ort8MfHx8fIyMnJysvMzc7P0dLU1dfZ2tze4OLl5+ns7vHzy8vMzMzNzc7Pz9DR0tTV1tjZ293f4OLk5unr7fDy9PfQ0NDQ0dHS0tPU1dbX2Nnb3N7f4ePl5ujq7e/x8/b4+9TU1dXV1tbX19jZ2tvc3t/g4uPl5+nr7O/x8/X3+vz/"
