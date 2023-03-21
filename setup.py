@@ -77,7 +77,7 @@ setuptools.setup(
         "numpy>=1.20.1",
         "Pillow>=7.1.0",
         "pyzmq~=22.3",
-        "sentry-sdk==0.18.0",
+        "sentry-sdk==1.14.0",
         "requests>=2.22",
         "scikit-image>=0.19.2",
         "scikit-learn>=0.20",
