@@ -1,8 +1,10 @@
 import skimage.color
 import skimage.morphology
+import centrosome
 import numpy
 import centrosome.threshold
 import scipy
+import matplotlib
 
 
 def rgb_to_greyscale(image):
@@ -19,6 +21,114 @@ def medial_axis(image):
     if image.ndim > 2 and image.shape[-1] not in (3, 4):
         raise ValueError("Process 3D images plane-wise or use the medialaxis module")
     return skimage.morphology.medial_axis(image)
+
+
+def enhance_edges_sobel(image, mask=None, direction="all"):
+    if direction.casefold() == "all":
+        output_pixels = centrosome.filter.sobel(image, mask)
+    elif direction.casefold() == "horizontal":
+        output_pixels = centrosome.filter.hsobel(image, mask)
+    elif direction.casefold() == "vertical":
+        output_pixels = centrosome.filter.vsobel(image, mask)
+    else:
+        raise NotImplementedError(f"Unimplemented direction for Sobel: {direction}")
+    return output_pixels
+
+
+def enhance_edges_log(image, mask=None, sigma=2.0):
+    size = int(sigma * 4) + 1
+    output_pixels = centrosome.filter.laplacian_of_gaussian(image, mask, size, sigma)
+    return output_pixels
+
+
+def enhance_edges_prewitt(image, mask=None, direction="all"):
+    if direction.casefold() == "all":
+        output_pixels = centrosome.filter.prewitt(image, mask)
+    elif direction.casefold() == "horizontal":
+        output_pixels = centrosome.filter.hprewitt(image, mask)
+    elif direction.casefold() == "vertical":
+        output_pixels = centrosome.filter.vprewitt(image, mask)
+    else:
+        raise NotImplementedError(f"Unimplemented direction for Prewitt: {direction}")
+    return output_pixels
+
+
+def enhance_edges_canny(
+    image,
+    mask=None,
+    auto_threshold=True,
+    auto_low_threshold=True,
+    sigma=1.0,
+    low_threshold=0.1,
+    manual_threshold=0.2,
+    threshold_adjustment_factor=1.0,
+):
+
+    if auto_threshold or auto_low_threshold:
+        sobel_image = centrosome.filter.sobel(image)
+        low, high = centrosome.otsu.otsu3(sobel_image[mask])
+        if auto_threshold:
+            high_th = high * threshold_adjustment_factor
+        if auto_low_threshold:
+            low_th = low * threshold_adjustment_factor
+    else:
+        low_th = low_threshold
+        high_th = manual_threshold
+
+    output_pixels = centrosome.filter.canny(image, mask, sigma, low_th, high_th)
+    return output_pixels
+
+
+def morphology_closing(image, structuring_element=skimage.morphology.disk(1)):
+    if structuring_element.ndim == 3 and image.ndim == 2:
+        raise ValueError("Cannot apply a 3D structuring element to a 2D image")
+    # Check if a 2D structuring element will be applied to a 3D image planewise
+    planewise = structuring_element.ndim == 2 and image.ndim == 3
+    if planewise:
+        output = numpy.zeros_like(image)
+        for index, plane in enumerate(image):
+            output[index] = skimage.morphology.closing(plane, structuring_element)
+        return output
+    else:
+        return skimage.morphology.closing(image, structuring_element)
+
+
+def morphology_opening(image, structuring_element=skimage.morphology.disk(1)):
+    if structuring_element.ndim == 3 and image.ndim == 2:
+        raise ValueError("Cannot apply a 3D structuring element to a 2D image")
+    # Check if a 2D structuring element will be applied to a 3D image planewise
+    planewise = structuring_element.ndim == 2 and image.ndim == 3
+    if planewise:
+        output = numpy.zeros_like(image)
+        for index, plane in enumerate(image):
+            output[index] = skimage.morphology.opening(plane, structuring_element)
+        return output
+    else:
+        return skimage.morphology.opening(image, structuring_element)
+
+
+def morphological_skeleton_2d(image):
+    return skimage.morphology.skeletonize(image)
+
+
+def morphological_skeleton_3d(image):
+    return skimage.morphology.skeletonize_3d(image)
+
+
+def median_filter(image, window_size, mode):
+    return scipy.ndimage.median_filter(image, size=window_size, mode=mode)
+
+
+def reduce_noise(image, patch_size, patch_distance, cutoff_distance, channel_axis=None):
+    denoised = skimage.restoration.denoise_nl_means(
+        image=image,
+        patch_size=patch_size,
+        patch_distance=patch_distance,
+        h=cutoff_distance,
+        channel_axis=channel_axis,
+        fast_mode=True,
+    )
+    return denoised
 
 
 def get_threshold_robust_background(
@@ -113,9 +223,9 @@ def get_adaptive_threshold(
     if volumetric:
         # Array to store threshold values
         thresh_out = numpy.zeros(image.shape)
-        for z in range(image.shape[2]):
-            thresh_out[:, :, z] = get_adaptive_threshold(
-                image[:, :, z],
+        for z in range(image.shape[0]):
+            thresh_out[z, :, :] = get_adaptive_threshold(
+                image[z, :, :],
                 mask=None,  # Mask has already been applied
                 threshold_method=threshold_method,
                 window_size=window_size,
@@ -365,3 +475,47 @@ def apply_threshold(image, threshold, mask=None, smoothing=0):
         mask,
     )
     return (blurred_image >= threshold) & mask, sigma
+
+
+def overlay_objects(image, labels, opacity=0.3, max_label=None, seed=None, colormap="jet"):
+    cmap = matplotlib.cm.ScalarMappable(cmap=matplotlib.cm.get_cmap(colormap))
+
+    colors = cmap.to_rgba(
+        numpy.arange(labels.max() if max_label is None else max_label)
+    )[:, :3]
+
+    if seed is not None:
+        # Resetting the random seed helps keep object label colors consistent in displays
+        # where consistency is important, like RelateObjects.
+        numpy.random.seed(seed)
+
+    numpy.random.shuffle(colors)
+
+    if labels.ndim == 3:
+        overlay = numpy.zeros(labels.shape + (3,), dtype=numpy.float32)
+
+        for index, plane in enumerate(image):
+            unique_labels = numpy.unique(labels[index])
+
+            if unique_labels[0] == 0:
+                unique_labels = unique_labels[1:]
+
+            overlay[index] = skimage.color.label2rgb(
+                labels[index],
+                alpha=opacity,
+                bg_color=[0, 0, 0],
+                bg_label=0,
+                colors=colors[unique_labels - 1],
+                image=plane,
+            )
+
+        return overlay
+
+    return skimage.color.label2rgb(
+        labels,
+        alpha=opacity,
+        bg_color=[0, 0, 0],
+        bg_label=0,
+        colors=colors,
+        image=image,
+    )
