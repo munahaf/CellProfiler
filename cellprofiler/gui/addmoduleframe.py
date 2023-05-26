@@ -250,7 +250,7 @@ class AddModuleFrame(wx.Frame):
         ):
             self.__module_categories_list_box.Select(-1)
             self.__on_category_selected(None)
-            
+
         keys = list(self.__module_dict["All"].keys())
 
         # results in [('Module1', score1, idx1), ('Module2', score2, idx2), ...]
